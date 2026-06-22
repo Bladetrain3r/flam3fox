@@ -124,8 +124,11 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
   lanes and blended by a per-lane mask (no gather/scatter). **Opt-in** via
   `flam3_simd=1` with automatic scalar fallback when the genome isn't supported,
   so the default renderer is byte-for-byte unchanged.
-  - Supported so far: `linear`, `spherical`, post transform; no final
-    xform / chaos / pre-blur (else falls back).
+  - Supported so far: `linear`, `spherical`, `horseshoe`, `hyperbolic`,
+    `bent`, `fisheye`, `eyefish`, `bubble` (all arithmetic + `sqrt`, no
+    transcendentals yet), plus post transform; no final xform / chaos /
+    pre-blur (else falls back). Each validated statistically equivalent to
+    the scalar path.
   - Result (bench box): **1.55×** on the 4-xform scene, **1.85–1.96×** on a
     2-xform scene. The masked design scales ~`8 / num_xforms`, so fewer xforms
     win more; output validated statistically equivalent to scalar.

@@ -317,10 +317,22 @@ int flam3_iterate(flam3_genome *cp, int n, int fuse,  double *samples, unsigned 
 
 #define SIMD_W 8
 
-/* Variations implemented in the SIMD path so far. Both are pure arithmetic
-   (radial scalings of (tx,ty)), so they vectorize branch-free. */
+/* Variations implemented in the SIMD path so far. All need only arithmetic
+   plus sqrt (no transcendentals), so they vectorize cleanly with AVX2. */
 static int simd_var_supported(int v) {
-   return (v == VAR_LINEAR) || (v == VAR_SPHERICAL);
+   switch (v) {
+      case VAR_LINEAR:
+      case VAR_SPHERICAL:
+      case VAR_HORSESHOE:
+      case VAR_HYPERBOLIC:
+      case VAR_BENT:
+      case VAR_FISHEYE:
+      case VAR_EYEFISH:
+      case VAR_BUBBLE:
+         return 1;
+      default:
+         return 0;
+   }
 }
 
 int flam3_genome_simd_ok(flam3_genome *cp) {
@@ -329,6 +341,8 @@ int flam3_genome_simd_ok(flam3_genome *cp) {
       return 0;
    for (i = 0; i < cp->num_xforms; i++) {
       flam3_xform *xf = &cp->xform[i];
+      if (xf->density <= 0.0)   /* never selected; its var[] is irrelevant */
+         continue;
       for (j = 0; j < flam3_nvariations; j++)
          if (xf->var[j] != 0.0 && !simd_var_supported(j))
             return 0;
@@ -340,7 +354,11 @@ int flam3_iterate_simd(flam3_genome *cp, int n, int fuse, double *samples,
                        unsigned short *xform_distrib, randctx *rc) {
    int i, lane, step, k, badvals = 0;
    const int nx = cp->num_xforms;
-   const __m256 eps = _mm256_set1_ps(1e-10f);
+   const __m256 eps  = _mm256_set1_ps(1e-10f);
+   const __m256 one  = _mm256_set1_ps(1.0f);
+   const __m256 two  = _mm256_set1_ps(2.0f);
+   const __m256 half = _mm256_set1_ps(0.5f);
+   const __m256 zero = _mm256_setzero_ps();
    __m256 cx, cy, cc, cvis;
    float fx[SIMD_W], fy[SIMD_W], fc[SIMD_W], fv[SIMD_W], fnf[SIMD_W];
 
@@ -364,33 +382,106 @@ int flam3_iterate_simd(flam3_genome *cp, int n, int fuse, double *samples,
          fnf[lane] = (float)(int)xform_distrib[((unsigned)irand(rc)) & CHOOSE_XFORM_GRAIN_M1];
       fnv = _mm256_loadu_ps(fnf);
 
-      /* Apply every xform to all lanes; each lane keeps only its chosen one. */
+      /* Apply every (active) xform to all lanes; each lane keeps its chosen one. */
       for (i = 0; i < nx; i++) {
          flam3_xform *xf = &cp->xform[i];
-         __m256 c00 = _mm256_set1_ps((float)xf->c[0][0]);
-         __m256 c10 = _mm256_set1_ps((float)xf->c[1][0]);
-         __m256 c20 = _mm256_set1_ps((float)xf->c[2][0]);
-         __m256 c01 = _mm256_set1_ps((float)xf->c[0][1]);
-         __m256 c11 = _mm256_set1_ps((float)xf->c[1][1]);
-         __m256 c21 = _mm256_set1_ps((float)xf->c[2][1]);
-         __m256 wl  = _mm256_set1_ps((float)xf->var[VAR_LINEAR]);
-         __m256 ws  = _mm256_set1_ps((float)xf->var[VAR_SPHERICAL]);
-         float  cs  = (float)xf->color_speed;
-         __m256 omc = _mm256_set1_ps(1.0f - cs);
-         __m256 csc = _mm256_set1_ps(cs * (float)xf->color);
-         __m256 nvis = _mm256_set1_ps((float)xf->vis_adjusted);
-         __m256 tx, ty, sumsq, r2, p0, p1, ox, oy, nc, mask;
+         int vn;
+         __m256 c00, c10, c20, c01, c11, c21;
+         __m256 tx, ty, sumsq, psqrt, p0, p1, ox, oy, nc, nvis, mask;
+         float cs;
+         __m256 omc, csc;
+
+         /* Density-0 xforms are never selected, so skip them (their precalc
+            state may also be stale). */
+         if (xf->density <= 0.0)
+            continue;
+
+         c00 = _mm256_set1_ps((float)xf->c[0][0]);
+         c10 = _mm256_set1_ps((float)xf->c[1][0]);
+         c20 = _mm256_set1_ps((float)xf->c[2][0]);
+         c01 = _mm256_set1_ps((float)xf->c[0][1]);
+         c11 = _mm256_set1_ps((float)xf->c[1][1]);
+         c21 = _mm256_set1_ps((float)xf->c[2][1]);
+         cs  = (float)xf->color_speed;
+         omc = _mm256_set1_ps(1.0f - cs);
+         csc = _mm256_set1_ps(cs * (float)xf->color);
+         nvis = _mm256_set1_ps((float)xf->vis_adjusted);
 
          tx = _mm256_fmadd_ps(c00, cx, _mm256_fmadd_ps(c10, cy, c20));
          ty = _mm256_fmadd_ps(c01, cx, _mm256_fmadd_ps(c11, cy, c21));
          sumsq = _mm256_fmadd_ps(tx, tx, _mm256_mul_ps(ty, ty));
-         r2 = _mm256_div_ps(ws, _mm256_add_ps(sumsq, eps));
+         psqrt = _mm256_sqrt_ps(sumsq);
 
-         /* linear (weight wl) + spherical (weight ws): both scale (tx,ty) */
-         p0 = _mm256_mul_ps(wl, tx);
-         p1 = _mm256_mul_ps(wl, ty);
-         p0 = _mm256_fmadd_ps(r2, tx, p0);
-         p1 = _mm256_fmadd_ps(r2, ty, p1);
+         p0 = zero;
+         p1 = zero;
+
+         /* Sum the xform's active variations into (p0,p1). */
+         for (vn = 0; vn < xf->num_active_vars; vn++) {
+            __m256 w = _mm256_set1_ps((float)xf->active_var_weights[vn]);
+            switch (xf->varFunc[vn]) {
+
+            case VAR_LINEAR:
+               p0 = _mm256_fmadd_ps(w, tx, p0);
+               p1 = _mm256_fmadd_ps(w, ty, p1);
+               break;
+
+            case VAR_SPHERICAL: {
+               __m256 r = _mm256_div_ps(w, _mm256_add_ps(sumsq, eps));
+               p0 = _mm256_fmadd_ps(r, tx, p0);
+               p1 = _mm256_fmadd_ps(r, ty, p1);
+               break; }
+
+            case VAR_HORSESHOE: {
+               __m256 r = _mm256_div_ps(w, _mm256_add_ps(psqrt, eps));
+               /* p0 += (tx-ty)(tx+ty)*r ; p1 += 2*tx*ty*r */
+               __m256 a = _mm256_mul_ps(_mm256_sub_ps(tx, ty), _mm256_add_ps(tx, ty));
+               p0 = _mm256_fmadd_ps(a, r, p0);
+               p1 = _mm256_fmadd_ps(_mm256_mul_ps(two, _mm256_mul_ps(tx, ty)), r, p1);
+               break; }
+
+            case VAR_HYPERBOLIC: {
+               /* sina=tx/psqrt, cosa=ty/psqrt, r=psqrt+EPS */
+               __m256 r = _mm256_add_ps(psqrt, eps);
+               __m256 sina = _mm256_div_ps(tx, psqrt);
+               __m256 cosa = _mm256_div_ps(ty, psqrt);
+               p0 = _mm256_fmadd_ps(w, _mm256_div_ps(sina, r), p0);
+               p1 = _mm256_fmadd_ps(w, _mm256_mul_ps(cosa, r), p1);
+               break; }
+
+            case VAR_BENT: {
+               /* nx = (tx<0)?2tx:tx ; ny = (ty<0)?ty/2:ty */
+               __m256 mx = _mm256_cmp_ps(tx, zero, _CMP_LT_OQ);
+               __m256 my = _mm256_cmp_ps(ty, zero, _CMP_LT_OQ);
+               __m256 nxv = _mm256_blendv_ps(tx, _mm256_mul_ps(tx, two), mx);
+               __m256 nyv = _mm256_blendv_ps(ty, _mm256_mul_ps(ty, half), my);
+               p0 = _mm256_fmadd_ps(w, nxv, p0);
+               p1 = _mm256_fmadd_ps(w, nyv, p1);
+               break; }
+
+            case VAR_FISHEYE: {
+               /* r = 2w/(psqrt+1) ; p0 += r*ty ; p1 += r*tx  (axes swapped) */
+               __m256 r = _mm256_div_ps(_mm256_mul_ps(two, w), _mm256_add_ps(psqrt, one));
+               p0 = _mm256_fmadd_ps(r, ty, p0);
+               p1 = _mm256_fmadd_ps(r, tx, p1);
+               break; }
+
+            case VAR_EYEFISH: {
+               __m256 r = _mm256_div_ps(_mm256_mul_ps(two, w), _mm256_add_ps(psqrt, one));
+               p0 = _mm256_fmadd_ps(r, tx, p0);
+               p1 = _mm256_fmadd_ps(r, ty, p1);
+               break; }
+
+            case VAR_BUBBLE: {
+               /* r = w/(sumsq/4 + 1) */
+               __m256 r = _mm256_div_ps(w, _mm256_fmadd_ps(_mm256_set1_ps(0.25f), sumsq, one));
+               p0 = _mm256_fmadd_ps(r, tx, p0);
+               p1 = _mm256_fmadd_ps(r, ty, p1);
+               break; }
+
+            default:
+               break; /* unreachable: eligibility guards the variation set */
+            }
+         }
 
          if (xf->has_post) {
             __m256 q00 = _mm256_set1_ps((float)xf->post[0][0]);

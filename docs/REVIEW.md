@@ -181,3 +181,19 @@ path, avoiding lane-divergent control flow.
 fallback definition otherwise) rather than a new source file, to avoid an automake
 regen for `libflam3_la_SOURCES`. `-march=native` (D10) provides `__AVX2__`/FMA;
 without it the code compiles to the scalar fallback.
+
+### D12 — Broaden the SIMD variation set (arithmetic + sqrt batch)
+**Decision:** Refactor the SIMD inner loop from hardcoded linear+spherical into a
+per-active-variation `switch` and add the variations needing only arithmetic and
+`sqrt`: `horseshoe`, `hyperbolic`, `bent`, `fisheye`, `eyefish`, `bubble`.
+**Reasoning:** These broaden how many genomes qualify for the SIMD path with no new
+machinery (AVX2 has `_mm256_sqrt_ps`; no transcendentals needed). The `switch`
+structure also sets up cleanly for adding trig-based variations next. The loop now
+skips density-0 xforms (never selected; their precalc state can be stale).
+**Validation:** Each variation rendered through scalar vs SIMD on a populated scene
+and checked statistically equivalent. All match. *Note on `bent`:* with deliberately
+expansive test coefficients it diverged (43% of pixels), but with normal contractive
+coefficients it matches (mean abs ≈ 0.16). The cause is the D11 bad-value tradeoff —
+expansive maps generate many out-of-range points, and the scalar retry-up-to-5×
+differs from the SIMD single-reset — not a math error (verified by hand). This is an
+accepted limitation of the opt-in path, most visible on piecewise-linear maps.
