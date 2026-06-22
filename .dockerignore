@@ -1,0 +1,11 @@
+.git
+ui/build
+ui/third_party
+*.o
+*.lo
+*.la
+.libs
+.deps
+*.png
+*.jpg
+*.ppm

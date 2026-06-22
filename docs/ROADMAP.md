@@ -1,0 +1,189 @@
+# flam3fox — Assessment & Roadmap
+
+A fork of Scott Draves' `flam3` fractal flame renderer with two goals:
+
+1. **Optimize the renderer** as far as it can reasonably go.
+2. Add a **simple interactive UI** inspired by Apophysis / Apo7x.
+
+## Direction (decided)
+
+| Decision | Choice |
+| --- | --- |
+| Optimization ceiling | **CPU first** (build flags, threading, SIMD), **then a GPU backend** |
+| UI stack | **Dear ImGui** (C++), linking directly against `libflam3` |
+| Target platform | **Linux first** (keep portability in mind, don't gate on Win/macOS) |
+
+---
+
+## Codebase Assessment
+
+### What it is
+- C library (`libflam3`) + four CLI tools: `flam3-render`, `flam3-animate`,
+  `flam3-genome`, `flam3-convert`. GPL3.
+- ~16k lines of C, GNU autotools build.
+- Dependencies: libpng, libjpeg, libz, libxml2, pthreads.
+- No GUI, no GPU. Scalar double/float math throughout.
+
+### Render pipeline (`rect.c` → `render_rectangle`)
+```
+for batch:
+  for temporal_sample:          interpolate genome, build colormap + xform distribution
+    for sub_batch (threaded):   chaos game → scatter into shared bucket buffer
+  log-scale + density-estimation (DE) filter → accumulate buffer
+spatial filter + gamma / vibrancy → output pixels
+```
+
+### Hot path
+- `flam3_iterate` (`flam3.c:232`) → `apply_xform` (`variations.c:2129`).
+- Per iteration: affine transform, then a loop over active variations dispatched
+  through a `switch` (`variations.c:2181`), each doing heavy transcendentals
+  (`sin`/`cos`/`atan2`/`sqrt`/`log`/`pow`).
+- Points scattered into a shared accumulator via `bump_no_overflow`
+  (`rect.c:411`) — no locks, benign data races.
+
+### Baseline measurement
+1280×960, quality 500, 4-vCPU dev box:
+
+| Threads | Time |
+| --- | --- |
+| 1 | 73.0 s |
+| 4 | 36.7 s |
+
+→ only **~2× scaling on 4 cores**. Prime suspect: false-sharing / cache-line
+bouncing on the single shared bucket buffer.
+
+### Strengths
+- The library API is already UI-ready: parse, `flam3_render` with a progress
+  callback supporting **live pause/abort** (`rect.c:189`), plus
+  `flam3_random`/`mutate`/`cross`/`interpolate` and full xform manipulation.
+- Clean stage separation (iterate / accumulate / filter).
+- Per-thread ISAAC RNG — already correct for parallelism.
+
+### Weaknesses / opportunities
+- Poor thread scaling (shared bucket buffer false-sharing).
+- Build flags leave wins on the table: `-O3 -ffast-math` but no `-march=native`,
+  LTO, or PGO.
+- Scalar math; the chaos game can't vectorize a single trajectory, but **many
+  independent trajectories can** run in SIMD lanes (the flam4/Fractorium trick).
+- Transcendental-heavy variations — candidates for fast approximations.
+- No GPU path — the largest available lever (10–100×).
+- Autotools is dated; CMake would ease the GUI build and cross-platform later.
+
+---
+
+## Roadmap
+
+### Phase 0 — Measurement harness ✅ *(done — see `bench/`)*
+- Repeatable benchmark across thread counts (`bench/benchmark.sh`).
+- Reference-image regression check with tolerance (`bench/regression.sh` +
+  `bench/golden.ppm`) so every optimization is proven to preserve output.
+- Pure-stdlib PPM comparator (`bench/compare.py`) — no external deps.
+- Determinism model documented in `bench/README.md` (fixed `isaac_seed` + fixed
+  thread count → reproducible; regression pins 1 thread).
+
+Baseline (bench scene, 256², quality 1000, 4-vCPU box):
+
+| Threads | Time | Speedup | Efficiency |
+| --- | --- | --- | --- |
+| 1 | 3.27 s | 1.00× | 100% |
+| 2 | 2.31 s | 1.42× | 71% |
+| 4 | 2.07 s | 1.58× | **40%** |
+
+→ Parallel efficiency collapses with cores — the headline Phase 1 target.
+
+### Phase 1 — Cheap CPU wins *(low risk, ~2–4× expected)*
+- ✅ **Per-thread private bucket buffers + reduction.** Each iteration thread
+  accumulates into its own histogram, removing the per-bump atomic CAS (≥3
+  threads) and the accumulation mutex (≤2 threads); buffers are summed after
+  join. Cost: bucket memory scales with thread count.
+  - Result (bench scene, 4-vCPU box):
+
+    | Workload | Before (4t) | After (4t) | Efficiency |
+    | --- | --- | --- | --- |
+    | 256², q1000 | 1.58× | **3.25×** | 40% → 81% |
+    | 512², q2000 | — | **3.79×** | → 95% |
+
+  - 1-thread output unchanged (regression bit-exact).
+- ✅ **Build flags: `-march=native` + `-flto`** (overridable via `OPT_FLAGS`).
+  ~13% single-thread on top of the threading win; regression still bit-exact.
+- Function-pointer variation dispatch built in `xform_precalc` (replace the
+  inner-loop `switch`). *(pending — likely marginal; the switch is already a
+  jump table. Will measure before committing.)*
+
+**Phase 1 combined** (bench scene 256², q1000, vs original baseline):
+
+| | Original | After Phase 1 | Gain |
+| --- | --- | --- | --- |
+| 1 thread | 3.27 s | 2.84 s | 1.15× |
+| 4 threads | 2.07 s | 0.78 s | **2.65×** |
+
+### Phase 2 — SIMD chaos game *(bigger lift, bigger payoff)*
+- ✅ **Foundation: AVX2 8-wide chaos game** (`flam3_iterate_simd` in `flam3.c`).
+  Iterates 8 independent trajectories per step; each lane draws its own xform
+  (scalar ISAAC, matching the scalar path) and every xform is applied to all
+  lanes and blended by a per-lane mask (no gather/scatter). **Opt-in** via
+  `flam3_simd=1` with automatic scalar fallback when the genome isn't supported,
+  so the default renderer is byte-for-byte unchanged.
+  - Supported so far (12): `linear`, `spherical`, `horseshoe`, `hyperbolic`,
+    `bent`, `fisheye`, `eyefish`, `bubble` (arithmetic + `sqrt`), and
+    `sinusoidal`, `cylinder`, `swirl`, `diamond` (via a vectorized
+    `simd_sincos`), plus post transform; no final xform / chaos / pre-blur
+    (else falls back). Each validated statistically equivalent to scalar.
+  - Trig-heavy scenes gain more (**2.2–2.5×** on a 2-xform `swirl`/`sinusoidal`
+    scene) since the vectorized sincos replaces expensive scalar `libm` calls.
+  - Result (bench box): **1.55×** on the 4-xform scene, **1.85–1.96×** on a
+    2-xform scene. The masked design scales ~`8 / num_xforms`, so fewer xforms
+    win more; output validated statistically equivalent to scalar.
+- **Next:** vectorize more variations (incl. fast/approx transcendentals for
+  `sin`/`cos`/`atan2`), reduce per-step overhead, then evaluate making SIMD the
+  default once the supported set is broad enough.
+- ✅ **Binning iterator + hybrid dispatch.** A second iterator keeps a pool of
+  trajectories and counting-sorts them by chosen xform each step so every SIMD
+  group applies one xform (no `8/num_xforms` decay). Head-to-head showed masked
+  wins at low xform counts (register residency) and binning wins at high counts
+  (flat throughput), crossover ~5-6 xforms — so `flam3_iterate_simd` now
+  dispatches: masked for `<6` xforms, binning for `>=6`. This removes the masked
+  cliff (8-xform `swirl` 1.27× → 1.71×, `spherical` 1.14× → 1.35×) while keeping
+  low-xform speed (2-xform `swirl` ~2.5×). Both share `simd_apply_xform`.
+- Restructure accumulation to handle batched lane output.
+
+### Phase 3 — GPU backend *(the ceiling)*
+- OpenCL (portable) chaos-game kernel; histogram accumulation on device.
+- Keep CPU path as the correctness reference and fallback.
+- Progressive accumulation for interactive preview feeding the UI.
+
+### Phase 4 — Apophysis-style UI (Dear ImGui) — *in progress (`ui/`)*
+- ✅ **Foundation.** `RenderEngine` (threaded progressive preview over
+  `libflam3`, abort-on-edit via the progress callback) + a Dear ImGui app
+  (GLFW/OpenGL) + a self-contained CMake build that compiles the flam3 sources
+  directly (SIMD enabled), with Dear ImGui vendored as a submodule. A headless
+  `render_engine_test` verifies the orchestration without a display.
+- ✅ **Controls:** load `.flam3`, target-quality slider, camera
+  (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform
+  weight edits — all click-to-type and re-rendering live.
+- ✅ **Save PNG** (current preview, via libflam3's `write_png`).
+- ✅ **Save `.flam3`** (parameter export via `flam3_print`; round-trips back
+  through the parser — handy for diffing against base flam3).
+- ✅ **SIMD preview toggle** — a checkbox drives the preview through the AVX2
+  path (`flam3_simd`), with automatic scalar fallback for unsupported genomes.
+- ✅ **Random scene panel** — `flam3_random` with tunable limits (xform-count
+  range, symmetry, SIMD-fast-variation restriction, framing/zoom range, size),
+  auto-framed via `flam3_estimate_bounding_box`.
+- ✅ **Dockerfile** for reproducible CLI builds (`autoreconf -fi` sidesteps the
+  host automake-version mismatch).
+- **Next (optional):** interactive triangle/affine xform editor, variation
+  params, palette/gradient editor, a real file-open dialog, mutate/cross.
+
+### Cross-cutting (as needed)
+- CMake build alongside/replacing autotools to ease GUI + tooling.
+- Documentation of the genome format and render parameters.
+
+---
+
+## Notes for contributors / future sessions
+- Build on this box: `apt-get install libxml2-dev libjpeg-dev`, then
+  `./configure && make` (touch generated autotools files first if it tries to
+  regenerate). `flam3-render` looks for `flam3-palettes.xml` in
+  `PACKAGE_DATA_DIR` (`/usr/local/share/flam3/`).
+- Benchmark recipe used for the baseline:
+  `nthreads=N qs=50 ss=2 ./flam3-render < test.flam3`.
