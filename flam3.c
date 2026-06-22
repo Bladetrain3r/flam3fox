@@ -3749,7 +3749,8 @@ ushort_atomic_add(unsigned short *dest, unsigned short delta)
    #undef iter_thread
    #undef de_thread_helper
    #undef de_thread
-   #define bump_no_overflow(dest, delta)  double_atomic_add(&dest, delta)
+   /* Per-thread private buckets (see rect.c) make atomics unnecessary. */
+   #define bump_no_overflow(dest, delta)  do {dest += delta;} while (0)
    #define render_rectangle render_rectangle_double_mt
    #define iter_thread iter_thread_double_mt
    #define de_thread_helper de_thread_helper_64_mt
@@ -3801,7 +3802,10 @@ ushort_atomic_add(unsigned short *dest, unsigned short delta)
    #undef iter_thread
    #undef de_thread_helper
    #undef de_thread
-   #define bump_no_overflow(dest, delta)  uint_atomic_add(&dest, delta)
+   /* Per-thread private buckets (see rect.c) make atomics unnecessary. */
+   #define bump_no_overflow(dest, delta) do { \
+      if (UINT_MAX - dest > delta) dest += delta; else dest = UINT_MAX; \
+   } while (0)
    #define render_rectangle render_rectangle_int_mt
    #define iter_thread iter_thread_int_mt
    #define de_thread_helper de_thread_helper_32_mt
@@ -3851,7 +3855,10 @@ ushort_atomic_add(unsigned short *dest, unsigned short delta)
    #undef iter_thread
    #undef de_thread_helper
    #undef de_thread
-   #define bump_no_overflow(dest, delta)  uint_atomic_add(&dest, delta)
+   /* Per-thread private buckets (see rect.c) make atomics unnecessary. */
+   #define bump_no_overflow(dest, delta) do { \
+      if (UINT_MAX - dest > delta) dest += delta; else dest = UINT_MAX; \
+   } while (0)
    #define render_rectangle render_rectangle_float_mt
    #define iter_thread iter_thread_float_mt
    #define de_thread_helper de_thread_helper_33_mt
@@ -3881,9 +3888,11 @@ double flam3_render_memory_required(flam3_frame *spec)
 
   real_bytes = real_bits / 8;
 
+  /* Per-thread bucket buffers (5 channels each) + one shared accumulator (4). */
   return
     (double) cps[0].spatial_oversample * cps[0].spatial_oversample *
-    (double) cps[0].width * cps[0].height * real_bytes * 9.0;
+    (double) cps[0].width * cps[0].height * real_bytes *
+    (5.0 * (spec->nthreads > 0 ? spec->nthreads : 1) + 4.0);
 }
 
 void bits_error(flam3_frame *spec) {

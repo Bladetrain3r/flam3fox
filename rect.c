@@ -265,6 +265,8 @@ static void iter_thread(void *fth) {
    
    fuse = (ficp->spec->earlyclip) ? FUSE_28 : FUSE_27;
 
+   fthp->badvals = 0;
+
    pauset.tv_sec = 0;
    pauset.tv_nsec = 100000000;
 
@@ -399,13 +401,9 @@ static void iter_thread(void *fth) {
       /* Execute iterations */
       badcount = flam3_iterate(&(fthp->cp), sub_batch_size, fuse, fthp->iter_storage, ficp->xform_distrib, &(fthp->rc));
 
-      #if defined(HAVE_LIBPTHREAD) && defined(USE_LOCKS)
-        /* Lock mutex for access to accumulator */
-        pthread_mutex_lock(&ficp->bucket_mutex);
-      #endif
-
-      /* Add the badcount to the counter */
-      ficp->badvals += badcount;
+      /* Accumulate this thread's bad-value count (summed into fic after join). */
+      /* Each thread owns its bucket buffer, so no locking is needed here.    */
+      fthp->badvals += badcount;
 
       /* Put them in the bucket accumulator */
       for (j = 0; j < sub_batch_size*4; j+=4) {
@@ -429,7 +427,7 @@ static void iter_thread(void *fth) {
          if (p0 >= ficp->bounds[0] && p1 >= ficp->bounds[1] && p0 <= ficp->bounds[2] && p1 <= ficp->bounds[3]) {
 
             double logvis=1.0;
-            bucket *buckets = (bucket *)(ficp->buckets);
+            bucket *buckets = (bucket *)(fthp->buckets);
 
             /* Skip if invisible */
             if (p[3]==0)
@@ -514,11 +512,6 @@ static void iter_thread(void *fth) {
 
          }
       }
-      
-      #if defined(HAVE_LIBPTHREAD) && defined(USE_LOCKS)
-        /* Release mutex */
-        pthread_mutex_unlock(&ficp->bucket_mutex);
-      #endif
 
    }
    #ifdef HAVE_LIBPTHREAD
@@ -686,7 +679,9 @@ static int render_rectangle(flam3_frame *spec, void *out,
    fic.width  = oversample * image_width  + 2 * gutter_width;
 
    nbuckets = (long)fic.width * (long)fic.height;
-   memory_rqd = (sizeof(bucket) * nbuckets + sizeof(abucket) * nbuckets +
+   /* Each thread accumulates into its own private bucket buffer to avoid    */
+   /* lock/atomic contention and false sharing; they are reduced after join. */
+   memory_rqd = (sizeof(bucket) * nbuckets * spec->nthreads + sizeof(abucket) * nbuckets +
                  4 * sizeof(double) * (size_t)(spec->sub_batch_size) * spec->nthreads);
    last_block = (char *) malloc(memory_rqd);
    if (NULL == last_block) {
@@ -695,10 +690,10 @@ static int render_rectangle(flam3_frame *spec, void *out,
       return(1);
    }
 
-   /* Just free buckets at the end */   
+   /* Just free buckets at the end */
    buckets = (bucket *) last_block;
-   accumulate = (abucket *) (last_block + sizeof(bucket) * nbuckets);
-   points = (double *)  (last_block + (sizeof(bucket) + sizeof(abucket)) * nbuckets);
+   accumulate = (abucket *) (last_block + sizeof(bucket) * nbuckets * spec->nthreads);
+   points = (double *)  (last_block + (sizeof(bucket) * spec->nthreads + sizeof(abucket)) * nbuckets);
 
    if (verbose) {
       fprintf(stderr, "chaos: ");
@@ -718,7 +713,7 @@ static int render_rectangle(flam3_frame *spec, void *out,
 
       de_time = spec->time + temporal_deltas[batch_num*ntemporal_samples];
 
-      memset((char *) buckets, 0, sizeof(bucket) * nbuckets);
+      memset((char *) buckets, 0, sizeof(bucket) * nbuckets * spec->nthreads);
 
       /* interpolate and get a control point                      */
       /* ONLY FOR DENSITY FILTER WIDTH PURPOSES                   */
@@ -878,6 +873,7 @@ static int render_rectangle(flam3_frame *spec, void *out,
             }
 
             fth[thi].iter_storage = &(points[thi*(spec->sub_batch_size)*4]);
+            fth[thi].buckets = (void *)(buckets + (long)thi * nbuckets);
             fth[thi].fic = &fic;
             flam3_copy(&(fth[thi].cp),&cp);
 
@@ -915,7 +911,11 @@ static int render_rectangle(flam3_frame *spec, void *out,
          
          /* Free the xform_distrib array */
          free(xform_distrib);
-             
+
+         /* Sum each thread's bad-value count (accumulated privately) */
+         for (thi = 0; thi < spec->nthreads; thi++)
+            fic.badvals += fth[thi].badvals;
+
          if (fic.aborted) {
             if (verbose) fprintf(stderr, "\naborted!\n");
             goto done;
@@ -928,6 +928,24 @@ static int render_rectangle(flam3_frame *spec, void *out,
          background[2] += cp.background[2];
          vib_gam_n++;
 
+      }
+
+      /* Reduce the per-thread bucket buffers into the first buffer, which the */
+      /* density-estimation / log-scaling stage below reads as 'buckets'.      */
+      if (spec->nthreads > 1) {
+         long bi;
+         int ti;
+         bucket *b0 = buckets;
+         for (ti = 1; ti < spec->nthreads; ti++) {
+            bucket *bt = buckets + (long)ti * nbuckets;
+            for (bi = 0; bi < nbuckets; bi++) {
+               bump_no_overflow(b0[bi][0], bt[bi][0]);
+               bump_no_overflow(b0[bi][1], bt[bi][1]);
+               bump_no_overflow(b0[bi][2], bt[bi][2]);
+               bump_no_overflow(b0[bi][3], bt[bi][3]);
+               bump_no_overflow(b0[bi][4], bt[bi][4]);
+            }
+         }
       }
 
       k1 =(cp.contrast * cp.brightness *

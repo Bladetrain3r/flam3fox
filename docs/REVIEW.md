@@ -94,3 +94,33 @@ that stale autotools timestamps require touching the generated files before
 **Reasoning:** Reproducibility for future sessions on a fresh, ephemeral
 container. Regenerating autotools risked version mismatches (`aclocal-1.15` not
 present); touching the committed generated files is the lower-risk path.
+
+---
+
+## Phase 1 — CPU optimization
+
+### D9 — Per-thread bucket buffers instead of atomics/locks
+**Decision:** Give each iteration thread its own private histogram buffer and
+reduce them after join, rather than having all threads accumulate into one
+shared buffer.
+**Reasoning:** Profiling the dispatch revealed the real scaling bottleneck:
+`flam3_render` routes ≥3 threads to an `_mt` path doing a `__sync` compare-and-swap
+on *every* bucket write, and ≤2 threads to a path that serializes *all*
+accumulation behind a mutex (`USE_LOCKS`). Both throttle the hot loop. Private
+per-thread histograms let every write be a plain (or saturating) add with no
+synchronization; a single cheap reduction pass merges them before density
+estimation. Measured 4-thread efficiency rose from 40% → 81% (small scene) and
+to 95% (larger scene), with 1-thread output bit-identical.
+**Cost / tradeoff:** Bucket memory now scales with thread count
+(`5·nthreads + 4` channels per cell vs `5 + 4`). Acceptable for typical renders
+on Linux; `flam3_render_memory_required` was updated to report it. A future
+guard could fall back to shared+atomic accumulation if a render's projected
+memory is excessive.
+**Implementation notes:** The atomic-add helpers (`*_atomic_add`) are now unused
+but retained (harmless `static inline`) in case a shared fallback is added. The
+`_mt` render variants still exist for the dispatch but their bump macro is now
+identical to the single-threaded one. `bad-value` counts are accumulated
+per-thread and summed after join to avoid a shared-counter race.
+**Rejected:** *Make the ≥3-thread path non-atomic on the shared buffer* (removes
+atomics but reintroduces lost-update races and false sharing — strictly worse
+than private buffers, which are both faster and more correct).

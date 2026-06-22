@@ -120,6 +120,8 @@ typedef struct {
 
 typedef struct {
    double *iter_storage; /* Storage for iteration coordinates */
+   void *buckets; /* This thread's private bucket buffer (reduced after join) */
+   double badvals; /* Bad-value count from this thread's last sub-batch */
    randctx rc; /* Thread-unique ISAAC seed */
    flam3_genome cp; /* Full copy of genome for use by the thread */
    int first_thread;

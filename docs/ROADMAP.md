@@ -92,9 +92,19 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
 → Parallel efficiency collapses with cores — the headline Phase 1 target.
 
 ### Phase 1 — Cheap CPU wins *(low risk, ~2–4× expected)*
+- ✅ **Per-thread private bucket buffers + reduction.** Each iteration thread
+  accumulates into its own histogram, removing the per-bump atomic CAS (≥3
+  threads) and the accumulation mutex (≤2 threads); buffers are summed after
+  join. Cost: bucket memory scales with thread count.
+  - Result (bench scene, 4-vCPU box):
+
+    | Workload | Before (4t) | After (4t) | Efficiency |
+    | --- | --- | --- | --- |
+    | 256², q1000 | 1.58× | **3.25×** | 40% → 81% |
+    | 512², q2000 | — | **3.79×** | → 95% |
+
+  - 1-thread output unchanged (regression bit-exact).
 - Add `-march=native` / `-mtune`, LTO, and a PGO build option.
-- **Per-thread private bucket buffers + reduction** to kill false-sharing and
-  fix thread scaling.
 - Function-pointer variation dispatch built in `xform_precalc` (replace the
   inner-loop `switch`).
 
