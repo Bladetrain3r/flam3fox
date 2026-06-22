@@ -104,9 +104,18 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
     | 512², q2000 | — | **3.79×** | → 95% |
 
   - 1-thread output unchanged (regression bit-exact).
-- Add `-march=native` / `-mtune`, LTO, and a PGO build option.
+- ✅ **Build flags: `-march=native` + `-flto`** (overridable via `OPT_FLAGS`).
+  ~13% single-thread on top of the threading win; regression still bit-exact.
 - Function-pointer variation dispatch built in `xform_precalc` (replace the
-  inner-loop `switch`).
+  inner-loop `switch`). *(pending — likely marginal; the switch is already a
+  jump table. Will measure before committing.)*
+
+**Phase 1 combined** (bench scene 256², q1000, vs original baseline):
+
+| | Original | After Phase 1 | Gain |
+| --- | --- | --- | --- |
+| 1 thread | 3.27 s | 2.84 s | 1.15× |
+| 4 threads | 2.07 s | 0.78 s | **2.65×** |
 
 ### Phase 2 — SIMD chaos game *(bigger lift, bigger payoff)*
 - Iterate N independent trajectories per SIMD register (AVX2/AVX-512).

@@ -124,3 +124,24 @@ per-thread and summed after join to avoid a shared-counter race.
 **Rejected:** *Make the ≥3-thread path non-atomic on the shared buffer* (removes
 atomics but reintroduces lost-update races and false sharing — strictly worse
 than private buffers, which are both faster and more correct).
+
+### D10 — `-march=native -flto`, overridable via `OPT_FLAGS`
+**Decision:** Add `-march=native -flto` to `AM_CFLAGS` through an `OPT_FLAGS`
+variable that can be overridden or cleared on the make line.
+**Reasoning:** ~13% single-thread speedup for free (FMA + wider vectors via
+`-march=native`, cross-TU inlining via `-flto`) and the regression stays
+bit-exact. `-march=native` targets the build host, which is correct for a
+Linux-first optimization fork; making it an `OPT_FLAGS` variable keeps
+distributors/CI able to retarget (`make OPT_FLAGS="-march=x86-64-v2"`) or
+disable it (`make OPT_FLAGS=`).
+**Build-system note:** Editing `AM_CFLAGS` would normally trigger an automake
+regen, but the repo was generated with automake 1.15 (only 1.16 is installed),
+which previously broke `make`. To avoid a noisy 1.15→1.16 mass-regeneration of
+`configure`/`Makefile.in`, the change was applied surgically to both
+`Makefile.am` (source of truth) and the committed `Makefile.in`, then `Makefile`
+was regenerated with `./config.status` (no automake needed). `Makefile` itself is
+git-ignored (regenerated per machine by `configure`).
+**Rejected:** *Full `autoreconf -fi`* (clean in principle, but produces a large
+generated-file diff and risks subtle 1.15→1.16 behavior changes — disproportionate
+for a fork that plans to move to CMake in Phase 4); *hardcoding `-march=native`*
+(not overridable for other build hosts/CI).

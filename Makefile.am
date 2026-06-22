@@ -1,7 +1,11 @@
 AUTOMAKE_OPTIONS = foreign no-dependencies
 
 GIT_DEF = -D'GIT_REV="$(shell git describe --tags --dirty)"'
-AM_CFLAGS = -g -O3 -std=gnu99 -ffast-math -DPACKAGE_DATA_DIR=\"$(pkgdatadir)\" $(GIT_DEF)
+# Optimization flags. Override on the make/configure line to retarget or
+# disable, e.g. `make OPT_FLAGS="-march=x86-64-v2"` or `make OPT_FLAGS=`.
+# -march=native targets the build host; -flto enables link-time optimization.
+OPT_FLAGS = -march=native -flto
+AM_CFLAGS = -g -O3 -std=gnu99 -ffast-math $(OPT_FLAGS) -DPACKAGE_DATA_DIR=\"$(pkgdatadir)\" $(GIT_DEF)
 
 ACLOCAL_AMFLAGS = -I m4
 
