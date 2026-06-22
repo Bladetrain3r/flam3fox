@@ -304,3 +304,26 @@ and three UI features: Save PNG, a Random-scene panel, and click-to-type inputs.
 flow so iterative rebuilds are easy); *write PNG by hand with libpng* (libflam3
 already has `write_png`); *render-to-full-quality on save* (deferred; preview buffer
 is what the user sees).
+
+### D17 — Finalize: `.flam3` export, SIMD preview toggle, README, clean-build check
+**Decision:** Round out the project: export `.flam3` from the UI, add a SIMD
+preview toggle, add a top-level `README.md`, and verify clean from-scratch builds.
+**Reasoning:**
+- *`.flam3` export* (`flam3_print`) lets parameters be saved and re-rendered in
+  base flam3 for apples-to-apples comparison; verified to round-trip through the
+  parser (save → reload → render).
+- *SIMD preview toggle:* the render path already reads `flam3_simd` from the
+  environment, so the engine just `setenv`s it before each render. Only the single
+  worker thread touches that variable, so this avoids any library API change while
+  staying thread-safe. Unsupported genomes fall back to scalar automatically.
+- *README.md:* the repo only had the upstream `README.txt`; a landing page makes
+  the fork's purpose, gains, and build paths discoverable.
+- *Clean-build verification:* confirmed here that (a) the CLI builds from the
+  committed tree via `autoreconf -fi && ./configure && make` (the Docker path) and
+  renders correctly (matches the golden, SIMD path works), and (b) the UI builds
+  from scratch with CMake and passes the headless test (load, progressive, SIMD,
+  randomize, PNG, `.flam3` round-trip).
+**State:** Phases 0-2 (harness, threading, SIMD) and a working Phase 4 UI are
+complete. Phase 3 (GPU) is intentionally deferred — its SIMT model is where the
+binning iterator (D14) would pay off. Remaining UI items (triangle editor,
+variation-param/palette editors) are optional polish, not blockers.
