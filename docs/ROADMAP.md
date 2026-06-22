@@ -73,12 +73,23 @@ bouncing on the single shared bucket buffer.
 
 ## Roadmap
 
-### Phase 0 — Measurement harness *(prerequisite)*
-- Repeatable benchmark script (fixed genome, size, quality, thread counts).
-- **Reference-image regression check** (render → compare against a golden image
-  within tolerance) so every optimization is proven to preserve output.
-- Optional CI to run build + benchmark + image diff.
-- *Rationale: nothing in later phases is trustworthy without this.*
+### Phase 0 — Measurement harness ✅ *(done — see `bench/`)*
+- Repeatable benchmark across thread counts (`bench/benchmark.sh`).
+- Reference-image regression check with tolerance (`bench/regression.sh` +
+  `bench/golden.ppm`) so every optimization is proven to preserve output.
+- Pure-stdlib PPM comparator (`bench/compare.py`) — no external deps.
+- Determinism model documented in `bench/README.md` (fixed `isaac_seed` + fixed
+  thread count → reproducible; regression pins 1 thread).
+
+Baseline (bench scene, 256², quality 1000, 4-vCPU box):
+
+| Threads | Time | Speedup | Efficiency |
+| --- | --- | --- | --- |
+| 1 | 3.27 s | 1.00× | 100% |
+| 2 | 2.31 s | 1.42× | 71% |
+| 4 | 2.07 s | 1.58× | **40%** |
+
+→ Parallel efficiency collapses with cores — the headline Phase 1 target.
 
 ### Phase 1 — Cheap CPU wins *(low risk, ~2–4× expected)*
 - Add `-march=native` / `-mtune`, LTO, and a PGO build option.

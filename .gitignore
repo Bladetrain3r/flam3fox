@@ -20,7 +20,13 @@ flam3-convert
 *.png
 *.jpg
 *.ppm
+# ...but keep the committed regression reference image
+!bench/golden.ppm
 
 # Editor / scratch
 *.swp
 .DS_Store
+
+# Python cache
+__pycache__/
+*.pyc

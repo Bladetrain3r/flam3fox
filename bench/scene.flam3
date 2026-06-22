@@ -1,0 +1,8 @@
+<test>
+<flame time="0" palette="15" size="256 256" center="0 0" scale="96" zoom="0" oversample="1" filter="1" quality="1000" background="0 0 0" brightness="4" gamma="4" vibrancy="1" hue="0.22851">
+   <xform weight="0.25" color="1" spherical="1" coefs="-0.681206 -0.0779465 0.20769 0.755065 -0.0416126 -0.262334"/>
+   <xform weight="0.25" color="0.66" spherical="1" coefs="0.953766 0.48396 0.43268 -0.0542476 0.642503 -0.995898"/>
+   <xform weight="0.25" color="0.33" spherical="1" coefs="0.840613 -0.816191 0.318971 -0.430402 0.905589 0.909402"/>
+   <xform weight="0.25" color="0" spherical="1" coefs="0.960492 -0.466555 0.215383 -0.727377 -0.126074 0.253509"/>
+</flame>
+</test>
