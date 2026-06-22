@@ -118,8 +118,21 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
 | 4 threads | 2.07 s | 0.78 s | **2.65×** |
 
 ### Phase 2 — SIMD chaos game *(bigger lift, bigger payoff)*
-- Iterate N independent trajectories per SIMD register (AVX2/AVX-512).
-- Vectorized / fast-approximation transcendentals for hot variations.
+- ✅ **Foundation: AVX2 8-wide chaos game** (`flam3_iterate_simd` in `flam3.c`).
+  Iterates 8 independent trajectories per step; each lane draws its own xform
+  (scalar ISAAC, matching the scalar path) and every xform is applied to all
+  lanes and blended by a per-lane mask (no gather/scatter). **Opt-in** via
+  `flam3_simd=1` with automatic scalar fallback when the genome isn't supported,
+  so the default renderer is byte-for-byte unchanged.
+  - Supported so far: `linear`, `spherical`, post transform; no final
+    xform / chaos / pre-blur (else falls back).
+  - Result (bench box): **1.55×** on the 4-xform scene, **1.85–1.96×** on a
+    2-xform scene. The masked design scales ~`8 / num_xforms`, so fewer xforms
+    win more; output validated statistically equivalent to scalar.
+- **Next:** vectorize more variations (incl. fast/approx transcendentals for
+  `sin`/`cos`/`atan2`), reduce per-step overhead (vectorized xform-selection
+  RNG, batched store), then evaluate making SIMD the default once the supported
+  set is broad enough.
 - Restructure accumulation to handle batched lane output.
 
 ### Phase 3 — GPU backend *(the ceiling)*

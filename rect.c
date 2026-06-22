@@ -265,6 +265,9 @@ static void iter_thread(void *fth) {
    
    fuse = (ficp->spec->earlyclip) ? FUSE_28 : FUSE_27;
 
+   /* Use the AVX2 path only if enabled and the genome is supported. */
+   int use_simd = ficp->simd_enabled && flam3_genome_simd_ok(&(fthp->cp));
+
    fthp->badvals = 0;
 
    pauset.tv_sec = 0;
@@ -399,7 +402,10 @@ static void iter_thread(void *fth) {
       fthp->iter_storage[3] = flam3_random_isaac_01(&(fthp->rc));
 
       /* Execute iterations */
-      badcount = flam3_iterate(&(fthp->cp), sub_batch_size, fuse, fthp->iter_storage, ficp->xform_distrib, &(fthp->rc));
+      if (use_simd)
+         badcount = flam3_iterate_simd(&(fthp->cp), sub_batch_size, fuse, fthp->iter_storage, ficp->xform_distrib, &(fthp->rc));
+      else
+         badcount = flam3_iterate(&(fthp->cp), sub_batch_size, fuse, fthp->iter_storage, ficp->xform_distrib, &(fthp->rc));
 
       /* Accumulate this thread's bad-value count (summed into fic after join). */
       /* Each thread owns its bucket buffer, so no locking is needed here.    */
@@ -573,6 +579,7 @@ static int render_rectangle(flam3_frame *spec, void *out,
 
    fic.badvals = 0;
    fic.aborted = 0;
+   fic.simd_enabled = argi("flam3_simd", 0);
 
    stats->num_iters = 0;
 

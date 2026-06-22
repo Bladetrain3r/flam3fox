@@ -92,6 +92,7 @@ typedef struct {
    time_t *progress_timer_history;
    double *progress_history;
    int *progress_history_mark;
+   int simd_enabled; /* opt-in AVX2 chaos-game path (env flam3_simd) */
 #ifdef HAVE_LIBPTHREAD
    /* mutex for bucket accumulator */
    pthread_mutex_t bucket_mutex;
@@ -128,6 +129,11 @@ typedef struct {
    int timer_initialize;
    flam3_iter_constants *fic; /* Constants for render */
 } flam3_thread_helper;
+
+/* AVX2 SIMD chaos-game fast path (see flam3.c). */
+int flam3_genome_simd_ok(flam3_genome *cp);
+int flam3_iterate_simd(flam3_genome *g, int nsamples, int fuse, double *samples,
+                       unsigned short *xform_distrib, randctx *rc);
 
 double flam3_sinc(double x);
 

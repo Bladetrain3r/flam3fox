@@ -145,3 +145,39 @@ git-ignored (regenerated per machine by `configure`).
 generated-file diff and risks subtle 1.15→1.16 behavior changes — disproportionate
 for a fork that plans to move to CMake in Phase 4); *hardcoding `-march=native`*
 (not overridable for other build hosts/CI).
+
+---
+
+## Phase 2 — SIMD chaos game
+
+### D11 — AVX2 foundation: masked multi-xform, opt-in, scalar fallback
+**Decision:** Add an AVX2 path (`flam3_iterate_simd`) that runs 8 trajectories
+per step. Each lane independently selects its xform (scalar ISAAC draw); every
+xform is applied to all 8 lanes and the result blended in by a per-lane mask.
+Gated behind `flam3_simd=1` with `flam3_genome_simd_ok()` fallback to scalar.
+**Reasoning — why masked, not binning:** The clean alternatives for SIMD divergence
+are (a) *lane-shared xform* — broken, because a contractive IFS driven by one
+shared map sequence collapses all lanes to the same point; (b) *binning* points by
+chosen xform into homogeneous SIMD groups — gives full width regardless of xform
+count but needs gather/scatter and pool bookkeeping; (c) *masked multi-xform* —
+apply every xform to every lane, keep the matching one. We chose (c): it has no
+gather/scatter, keeps lanes independent and correct, and is simple enough to land
+safely. Its cost is computing all xforms each step, so speedup scales ~`8/num_xforms`
+(measured 1.55× at 4 xforms, ~1.9× at 2). Binning is the likely later upgrade.
+**Why opt-in + fallback:** Keeps the proven scalar renderer the default (regression
+stays byte-exact) while the SIMD path matures. `flam3_genome_simd_ok` only accepts
+genomes whose every nonzero variation is vectorized (currently `linear`,
+`spherical`) and that have no final xform / chaos; anything else runs scalar, so
+correctness is never at risk.
+**Why float, scalar RNG, no retry:** Lanes are `float` (8-wide, the throughput
+play; flames are histograms and tolerate float — Fractorium uses it on GPU).
+Output was validated statistically equivalent to the scalar double path
+(mean abs diff ≈ 1.2/255, same order as multi-thread RNG variation). Xform
+selection reuses scalar ISAAC draws (no new RNG to validate; the gather is scalar
+anyway). The scalar path's bad-value *retry* (re-roll up to 5×) is simplified to a
+single random reset per lane — a negligible statistical difference on an opt-in
+path, avoiding lane-divergent control flow.
+**Placement:** Implemented in `flam3.c` (guarded by `__AVX2__`, with a scalar
+fallback definition otherwise) rather than a new source file, to avoid an automake
+regen for `libflam3_la_SOURCES`. `-march=native` (D10) provides `__AVX2__`/FMA;
+without it the code compiles to the scalar fallback.
