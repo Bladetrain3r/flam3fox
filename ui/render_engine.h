@@ -47,6 +47,9 @@ public:
     // Write the most recently rendered image to a PNG. False if none yet.
     bool savePNG(const std::string &path);
 
+    // Write the current genome as a .flam3 (parameter export). False if none.
+    bool saveFlam3(const std::string &path);
+
     // The master genome, edited by the GUI thread. Returns null if none loaded.
     // After editing fields in place, call requestRerender(). For structural
     // changes use the locked helpers below.

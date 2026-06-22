@@ -92,6 +92,40 @@ int main(int argc, char **argv) {
     else
         fprintf(stderr, "WARN: savePNG failed\n");
 
+    // .flam3 export + round-trip: a fresh engine must parse it and render.
+    if (!eng.saveFlam3("engine_random.flam3")) {
+        fprintf(stderr, "FAIL: saveFlam3 failed\n");
+        return 3;
+    }
+    fprintf(stderr, "wrote engine_random.flam3\n");
+    {
+        RenderEngine reload;
+        reload.setTargetQuality(20);
+        if (!reload.loadFromFile("engine_random.flam3")) {
+            fprintf(stderr, "FAIL: could not reload exported .flam3\n");
+            return 3;
+        }
+        std::vector<unsigned char> r2;
+        int w2 = 0, h2 = 0; uint64_t v2 = 0, lv2 = 0;
+        for (int i = 0; i < 400; i++) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            if (reload.latestImage(r2, w2, h2, v2) && v2 != lv2) {
+                lv2 = v2;
+                if (!reload.isRendering() &&
+                    reload.currentQuality() >= reload.targetQuality())
+                    break;
+            }
+        }
+        long nb = 0;
+        for (size_t i = 0; i + 3 < r2.size(); i += 4)
+            if (r2[i] + r2[i + 1] + r2[i + 2] > 0) nb++;
+        fprintf(stderr, "round-trip render %dx%d nonblack=%ld\n", w2, h2, nb);
+        if (w2 <= 0 || nb == 0) {
+            fprintf(stderr, "FAIL: reloaded .flam3 did not render\n");
+            return 3;
+        }
+    }
+
     fprintf(stderr, "OK\n");
     return 0;
 }

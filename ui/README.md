@@ -54,9 +54,10 @@ export flam3_palettes=../../flam3-palettes.xml
 
 Implemented: load `.flam3`, progressive threaded preview, click-to-type camera
 (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform weight
-edits, **Save PNG**, and a **Random scene** panel (tunable xform-count range,
-symmetry, framing/zoom range, size, and an option to restrict to the
-AVX2-supported variations), auto-framed to fit.
+edits, **Save PNG**, **Save .flam3** (parameter export, round-trips through the
+parser), and a **Random scene** panel (tunable xform-count range, symmetry,
+framing/zoom range, size, and an option to restrict to the AVX2-supported
+variations), auto-framed to fit.
 
 Planned: interactive triangle/affine xform editor, variation parameter editing,
 palette/gradient editor, a real file-open dialog, save `.flam3`, mutate/cross,

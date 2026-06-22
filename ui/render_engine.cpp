@@ -158,6 +158,20 @@ bool RenderEngine::savePNG(const std::string &path) {
     return true;
 }
 
+bool RenderEngine::saveFlam3(const std::string &path) {
+    std::lock_guard<std::mutex> lk(genome_mtx_);
+    if (!has_genome_)
+        return false;
+    FILE *fp = fopen(path.c_str(), "wb");
+    if (!fp)
+        return false;
+    // flam3_print emits a self-contained <flame> element; the parser locates
+    // flame nodes recursively, so this round-trips as a valid .flam3 file.
+    flam3_print(fp, &master_, nullptr, flam3_dont_print_edits);
+    fclose(fp);
+    return true;
+}
+
 bool RenderEngine::latestImage(std::vector<unsigned char> &rgba, int &w, int &h,
                                uint64_t &imageVersion) {
     std::lock_guard<std::mutex> lk(image_mtx_);

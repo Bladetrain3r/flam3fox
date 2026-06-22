@@ -63,6 +63,7 @@ int main(int argc, char **argv) {
     char pathBuf[512];
     std::snprintf(pathBuf, sizeof(pathBuf), "%s", startFlame);
     char savePath[512] = "out.png";
+    char flamePath[512] = "out.flam3";
     float targetQ = (float)engine.targetQuality();
     RandomParams rp;
 
@@ -101,13 +102,21 @@ int main(int argc, char **argv) {
             engine.setTargetQuality(targetQ);
 
         ImGui::Separator();
-        ImGui::InputText("out", savePath, sizeof(savePath));
+        ImGui::InputText("png out", savePath, sizeof(savePath));
         if (ImGui::Button("Save PNG")) {
             if (!engine.savePNG(savePath))
                 fprintf(stderr, "save failed (no image yet?): %s\n", savePath);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(saves current preview)");
+        ImGui::TextDisabled("(current preview)");
+
+        ImGui::InputText("flam3 out", flamePath, sizeof(flamePath));
+        if (ImGui::Button("Save .flam3")) {
+            if (!engine.saveFlam3(flamePath))
+                fprintf(stderr, "save failed: %s\n", flamePath);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(parameters)");
 
         // ---- Random scene ---------------------------------------------------
         if (ImGui::CollapsingHeader("Random scene")) {

@@ -162,14 +162,16 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
   (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform
   weight edits — all click-to-type and re-rendering live.
 - ✅ **Save PNG** (current preview, via libflam3's `write_png`).
+- ✅ **Save `.flam3`** (parameter export via `flam3_print`; round-trips back
+  through the parser — handy for diffing against base flam3).
 - ✅ **Random scene panel** — `flam3_random` with tunable limits (xform-count
   range, symmetry, SIMD-fast-variation restriction, framing/zoom range, size),
   auto-framed via `flam3_estimate_bounding_box`.
 - ✅ **Dockerfile** for reproducible CLI builds (`autoreconf -fi` sidesteps the
   host automake-version mismatch).
-- **Next:** interactive triangle/affine xform editor, variation params,
-  palette/gradient editor, a real file-open dialog, save `.flam3`,
-  mutate/cross, and a toggle to drive previews through the AVX2 SIMD path.
+- **Next (optional):** interactive triangle/affine xform editor, variation
+  params, palette/gradient editor, a real file-open dialog, mutate/cross, and a
+  toggle to drive previews through the AVX2 SIMD path.
 
 ### Cross-cutting (as needed)
 - CMake build alongside/replacing autotools to ease GUI + tooling.
