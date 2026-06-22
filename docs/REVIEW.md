@@ -245,3 +245,36 @@ binned scene: mean abs ≈ 0.05/255). Default scalar path stays bit-exact.
 case, as the table shows); *keep masked only* (leaves the high-xform cliff and drops
 binning, which the GPU phase will build on); *AVX2 gather/scatter instructions* (the
 bottleneck is per-point data movement, which `vgather` doesn't meaningfully fix here).
+
+---
+
+## Phase 4 — UI
+
+### D15 — UI architecture: testable RenderEngine + ImGui glue, CMake, vendored ImGui
+**Decision:** Split the UI into a GUI-free `RenderEngine` (threaded progressive
+render over `libflam3`) and a thin Dear ImGui/GLFW `app.cpp`. Build it with a
+self-contained CMake that compiles the flam3 C sources directly; vendor Dear ImGui
+as a git submodule.
+**Reasoning:**
+- *Separation:* the container is headless, so the valuable logic (genome →
+  progressive preview, abort-on-edit) lives in `RenderEngine`, which a headless
+  `render_engine_test` exercises and verifies here; only the unrunnable GLFW/ImGui
+  glue stays untested in this environment. It also keeps a clean seam for a future
+  Qt/web front-end.
+- *Progressive preview:* render at geometrically increasing quality, publishing
+  each level; the flam3 progress callback returns "abort" when the revision counter
+  advances, so edits interrupt the in-flight render immediately. Reuses the existing
+  multithreaded + SIMD core unchanged.
+- *CMake compiling the C sources directly* (rather than linking the autotools
+  `libflam3`) makes the UI a one-command build with `-march=native` (SIMD on) and
+  no autotools dependency — matching the Phase-4 "move toward CMake" note without
+  converting the whole project.
+- *ImGui as a submodule* (pinned v1.91.5) keeps third-party code out of the tree
+  while guaranteeing the backends are present.
+**Gotcha recorded:** `flam3.h` includes `<libxml/parser.h>`, which on this system
+drags in ICU headers that include C++ `<memory>`; including it inside `extern "C"`
+gave "template with C linkage" errors. Fixed by including `<libxml/parser.h>` at C++
+linkage before the `extern "C"` block so its guards neutralize the re-include.
+**Rejected:** *Qt* (heavier; deferred per D2); *system `libimgui-dev`* (its packaging
+omits/varies the GLFW+OpenGL3 backends we need); *converting the whole build to
+CMake now* (unnecessary risk — the UI CMake is self-contained).

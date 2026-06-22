@@ -30,3 +30,6 @@ flam3-convert
 # Python cache
 __pycache__/
 *.pyc
+
+# UI build directory (CMake)
+/ui/build/

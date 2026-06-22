@@ -152,12 +152,19 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
 - Keep CPU path as the correctness reference and fallback.
 - Progressive accumulation for interactive preview feeding the UI.
 
-### Phase 4 — Apophysis-style UI (Dear ImGui)
-- Link against `libflam3`; live **progressive low-quality preview** (the render
-  pause/abort callback already supports this).
-- Editor surfaces: affine/triangle editor, xform weights, variation params,
-  palette/gradient editor, camera (zoom/rotate/center).
-- Load/save `.flam3`, random/mutate/cross via existing library calls.
+### Phase 4 — Apophysis-style UI (Dear ImGui) — *in progress (`ui/`)*
+- ✅ **Foundation.** `RenderEngine` (threaded progressive preview over
+  `libflam3`, abort-on-edit via the progress callback) + a Dear ImGui app
+  (GLFW/OpenGL) + a self-contained CMake build that compiles the flam3 sources
+  directly (SIMD enabled), with Dear ImGui vendored as a submodule. A headless
+  `render_engine_test` verifies the orchestration without a display.
+- ✅ **First controls:** load `.flam3`, target-quality slider, camera
+  (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform
+  weight edits — all re-rendering live.
+- **Next:** interactive triangle/affine xform editor, variation params,
+  palette/gradient editor, file dialog, save image/flame, random/mutate/cross
+  via existing library calls, and an option to drive previews through the AVX2
+  SIMD path.
 
 ### Cross-cutting (as needed)
 - CMake build alongside/replacing autotools to ease GUI + tooling.
