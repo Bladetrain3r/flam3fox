@@ -1,0 +1,26 @@
+# Build artifacts
+*.o
+*.lo
+*.la
+.libs/
+.deps/
+Makefile
+config.log
+config.status
+flam3.pc
+stamp-h1
+
+# Built binaries
+flam3-render
+flam3-animate
+flam3-genome
+flam3-convert
+
+# Render outputs
+*.png
+*.jpg
+*.ppm
+
+# Editor / scratch
+*.swp
+.DS_Store
