@@ -69,6 +69,27 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    // Exercise the SIMD preview path on the loaded scene.
+    eng.setSimd(true);
+    eng.setTargetQuality(100);
+    lastver = ver;
+    for (int i = 0; i < 400; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if (eng.latestImage(rgba, w, h, ver) && ver != lastver) {
+            lastver = ver;
+            if (!eng.isRendering() && eng.currentQuality() >= eng.targetQuality())
+                break;
+        }
+    }
+    {
+        long nb = 0;
+        for (size_t i = 0; i + 3 < rgba.size(); i += 4)
+            if (rgba[i] + rgba[i + 1] + rgba[i + 2] > 0) nb++;
+        fprintf(stderr, "SIMD-path render nonblack=%ld\n", nb);
+        if (nb == 0) { fprintf(stderr, "FAIL: SIMD render empty\n"); return 4; }
+    }
+    eng.setSimd(false);
+
     // Exercise the random-scene + PNG-save paths.
     RandomParams rp;
     rp.minXforms = 3;

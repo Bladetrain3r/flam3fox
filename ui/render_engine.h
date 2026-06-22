@@ -71,6 +71,11 @@ public:
     void   setTargetQuality(double q) { target_quality_.store(q); requestRerender(); }
     double targetQuality()  const { return target_quality_.load(); }
 
+    // Drive previews through the AVX2 SIMD path (falls back to scalar for
+    // genomes whose variations aren't vectorized).
+    void   setSimd(bool b) { simd_.store(b); requestRerender(); }
+    bool   simd() const { return simd_.load(); }
+
 private:
     struct CbCtx { RenderEngine *engine; uint64_t startRev; };
     static int progressCb(void *param, double frac, int stage, double eta);
@@ -96,4 +101,5 @@ private:
     std::atomic<double>   target_quality_{500.0};
     std::atomic<int>      render_ms_{0};
     std::atomic<int>      nthreads_{1};
+    std::atomic<bool>     simd_{false};
 };

@@ -57,11 +57,11 @@ Implemented: load `.flam3`, progressive threaded preview, click-to-type camera
 edits, **Save PNG**, **Save .flam3** (parameter export, round-trips through the
 parser), and a **Random scene** panel (tunable xform-count range, symmetry,
 framing/zoom range, size, and an option to restrict to the AVX2-supported
-variations), auto-framed to fit.
+variations), auto-framed to fit, and a **SIMD preview** toggle (drives the
+preview through the AVX2 path, scalar fallback for unsupported genomes).
 
 Planned: interactive triangle/affine xform editor, variation parameter editing,
-palette/gradient editor, a real file-open dialog, save `.flam3`, mutate/cross,
-and promoting the AVX2 SIMD path to the preview (`flam3_simd`).
+palette/gradient editor, a real file-open dialog, mutate/cross.
 
 ## CLI builds (Docker)
 

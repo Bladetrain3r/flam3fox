@@ -100,6 +100,11 @@ int main(int argc, char **argv) {
         if (ImGui::SliderFloat("target quality", &targetQ, 10.0f, 5000.0f, "%.0f",
                                ImGuiSliderFlags_Logarithmic))
             engine.setTargetQuality(targetQ);
+        bool simd = engine.simd();
+        if (ImGui::Checkbox("SIMD preview (AVX2)", &simd))
+            engine.setSimd(simd);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(scalar fallback if unsupported)");
 
         ImGui::Separator();
         ImGui::InputText("png out", savePath, sizeof(savePath));

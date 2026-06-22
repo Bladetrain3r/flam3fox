@@ -222,6 +222,10 @@ void RenderEngine::workerLoop() {
         bool aborted = false;
         rendering_.store(true);
 
+        // flam3_render reads the SIMD opt-in from the environment. Only this
+        // worker thread renders / touches this var, so setting it here is safe.
+        setenv("flam3_simd", simd_.load() ? "1" : "0", 1);
+
         // Progressive: render at geometrically increasing quality, publishing
         // each completed level, until we reach the target.
         for (double q = 1.0;; q *= 8.0) {
