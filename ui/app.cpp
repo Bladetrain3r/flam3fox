@@ -62,7 +62,9 @@ int main(int argc, char **argv) {
     uint64_t shownVersion = (uint64_t)-1;
     char pathBuf[512];
     std::snprintf(pathBuf, sizeof(pathBuf), "%s", startFlame);
+    char savePath[512] = "out.png";
     float targetQ = (float)engine.targetQuality();
+    RandomParams rp;
 
     while (!glfwWindowShouldClose(win)) {
         glfwPollEvents();
@@ -98,30 +100,52 @@ int main(int argc, char **argv) {
                                ImGuiSliderFlags_Logarithmic))
             engine.setTargetQuality(targetQ);
 
+        ImGui::Separator();
+        ImGui::InputText("out", savePath, sizeof(savePath));
+        if (ImGui::Button("Save PNG")) {
+            if (!engine.savePNG(savePath))
+                fprintf(stderr, "save failed (no image yet?): %s\n", savePath);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(saves current preview)");
+
+        // ---- Random scene ---------------------------------------------------
+        if (ImGui::CollapsingHeader("Random scene")) {
+            ImGui::InputInt("min xforms", &rp.minXforms);
+            ImGui::InputInt("max xforms", &rp.maxXforms);
+            ImGui::InputInt("symmetry", &rp.symmetry);
+            ImGui::InputInt("size", &rp.size);
+            ImGui::InputDouble("fit min", &rp.zoomFitMin, 0.05, 0.1, "%.2f");
+            ImGui::InputDouble("fit max", &rp.zoomFitMax, 0.05, 0.1, "%.2f");
+            ImGui::Checkbox("SIMD-fast variations only", &rp.fastVarsOnly);
+            if (ImGui::Button("Randomize"))
+                engine.randomize(rp);
+        }
+
+        // Numeric fields below are click-to-type (single click to edit).
         flam3_genome *g = engine.genome();
         if (g) {
             ImGui::Separator();
             ImGui::Text("Camera");
             bool changed = false;
-            changed |= ImGui::DragScalarN("center", ImGuiDataType_Double, g->center, 2, 0.005f);
-            changed |= ImGui::DragScalar("zoom", ImGuiDataType_Double, &g->zoom, 0.01f);
-            changed |= ImGui::DragScalar("rotate", ImGuiDataType_Double, &g->rotate, 0.5f);
-            changed |= ImGui::DragScalar("scale (ppu)", ImGuiDataType_Double, &g->pixels_per_unit, 0.5f);
+            changed |= ImGui::InputScalarN("center", ImGuiDataType_Double, g->center, 2, nullptr, nullptr, "%.5f");
+            changed |= ImGui::InputDouble("zoom", &g->zoom, 0.1, 0.5, "%.3f");
+            changed |= ImGui::InputDouble("rotate", &g->rotate, 1.0, 15.0, "%.2f");
+            changed |= ImGui::InputDouble("scale (ppu)", &g->pixels_per_unit, 1.0, 10.0, "%.2f");
 
             ImGui::Separator();
             ImGui::Text("Tone");
-            changed |= ImGui::DragScalar("brightness", ImGuiDataType_Double, &g->brightness, 0.02f);
-            changed |= ImGui::DragScalar("gamma", ImGuiDataType_Double, &g->gamma, 0.02f);
-            changed |= ImGui::DragScalar("vibrancy", ImGuiDataType_Double, &g->vibrancy, 0.01f);
+            changed |= ImGui::InputDouble("brightness", &g->brightness, 0.1, 1.0, "%.3f");
+            changed |= ImGui::InputDouble("gamma", &g->gamma, 0.1, 1.0, "%.3f");
+            changed |= ImGui::InputDouble("vibrancy", &g->vibrancy, 0.05, 0.25, "%.3f");
 
             ImGui::Separator();
             ImGui::Text("Transforms: %d", g->num_xforms);
             for (int i = 0; i < g->num_xforms; i++) {
                 ImGui::PushID(i);
-                changed |= ImGui::DragScalar("weight", ImGuiDataType_Double,
-                                             &g->xform[i].density, 0.005f);
-                ImGui::SameLine();
-                ImGui::Text("xform %d", i);
+                char lbl[32];
+                std::snprintf(lbl, sizeof(lbl), "weight xform %d", i);
+                changed |= ImGui::InputDouble(lbl, &g->xform[i].density, 0.01, 0.1, "%.4f");
                 ImGui::PopID();
             }
 

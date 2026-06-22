@@ -68,6 +68,30 @@ int main(int argc, char **argv) {
         fprintf(stderr, "FAIL: image is entirely black\n");
         return 2;
     }
+
+    // Exercise the random-scene + PNG-save paths.
+    RandomParams rp;
+    rp.minXforms = 3;
+    rp.maxXforms = 5;
+    rp.fastVarsOnly = true;
+    rp.size = 256;
+    eng.setTargetQuality(50);
+    eng.randomize(rp);
+    fprintf(stderr, "randomized; waiting for preview...\n");
+    lastver = ver;
+    for (int i = 0; i < 400; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if (eng.latestImage(rgba, w, h, ver) && ver != lastver) {
+            lastver = ver;
+            if (!eng.isRendering() && eng.currentQuality() >= eng.targetQuality())
+                break;
+        }
+    }
+    if (eng.savePNG("engine_random.png"))
+        fprintf(stderr, "wrote engine_random.png (%dx%d)\n", w, h);
+    else
+        fprintf(stderr, "WARN: savePNG failed\n");
+
     fprintf(stderr, "OK\n");
     return 0;
 }

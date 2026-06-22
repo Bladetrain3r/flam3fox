@@ -1,12 +1,29 @@
 #include "render_engine.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+// From img.h / png.c (part of flam3core). Declared here to avoid pulling img.h
+// (which re-includes flam3.h) into this translation unit.
+extern "C" {
+typedef struct {
+    char *genome;
+    char *badvals;
+    char *numiters;
+    char *rtime;
+} flam3_img_comments;
+void write_png(FILE *file, void *image, int width, int height,
+               flam3_img_comments *fpc, int bpc);
+}
 
 RenderEngine::RenderEngine() {
     std::memset(&master_, 0, sizeof(master_));
     nthreads_.store(flam3_count_nthreads());
+    flam3_srandom();  // seed libc RNG used by flam3_random()
     worker_ = std::thread(&RenderEngine::workerLoop, this);
 }
 
@@ -68,6 +85,77 @@ bool RenderEngine::loadFromFile(const std::string &path) {
         xml.append(chunk, r);
     fclose(fp);
     return loadFromString(xml);
+}
+
+bool RenderEngine::randomize(const RandomParams &p) {
+    // The AVX2-supported variation set (mirror of simd_var_supported).
+    static int kFastVars[] = {
+        VAR_LINEAR, VAR_SPHERICAL, VAR_HORSESHOE, VAR_HYPERBOLIC,
+        VAR_BENT, VAR_FISHEYE, VAR_EYEFISH, VAR_BUBBLE,
+        VAR_SINUSOIDAL, VAR_CYLINDER, VAR_SWIRL, VAR_DIAMOND};
+    static int kAnyVar[] = {flam3_variation_random};
+
+    int lo = std::max(1, std::min(p.minXforms, p.maxXforms));
+    int hi = std::max(lo, p.maxXforms);
+    int nx = lo + (int)(flam3_random01() * (hi - lo + 1));
+    if (nx > hi) nx = hi;
+
+    int *ivars = p.fastVarsOnly ? kFastVars : kAnyVar;
+    int nivars = p.fastVarsOnly ? (int)(sizeof(kFastVars) / sizeof(kFastVars[0])) : 1;
+    int size = std::max(16, p.size);
+
+    {
+        std::lock_guard<std::mutex> lk(genome_mtx_);
+        clearGenome();
+        flam3_random(&master_, ivars, nivars, p.symmetry, nx);
+        master_.width = size;
+        master_.height = size;
+        master_.ntemporal_samples = 1;
+        master_.estimator = 0.0;  // bits=33 disables DE anyway; avoid warnings
+        master_.zoom = 0.0;
+        master_.rotate = 0.0;
+        has_genome_ = true;
+
+        // Auto-frame: estimate the attractor's extent and fit it to the canvas.
+        flam3_frame fr;
+        std::memset(&fr, 0, sizeof(fr));
+        flam3_init_frame(&fr);
+        double bmin[2] = {-1, -1}, bmax[2] = {1, 1};
+        flam3_estimate_bounding_box(&master_, 0.01, 100000, bmin, bmax, &fr.rc);
+        double ex = bmax[0] - bmin[0], ey = bmax[1] - bmin[1];
+        if (ex < 1e-6) ex = 1e-6;
+        if (ey < 1e-6) ey = 1e-6;
+        master_.center[0] = 0.5 * (bmin[0] + bmax[0]);
+        master_.center[1] = 0.5 * (bmin[1] + bmax[1]);
+        double fit = std::min((double)size / ex, (double)size / ey) * 0.9;
+        double lim = p.zoomFitMax > p.zoomFitMin ? p.zoomFitMax : p.zoomFitMin;
+        double mul = p.zoomFitMin + flam3_random01() * (lim - p.zoomFitMin);
+        master_.pixels_per_unit = fit * mul;
+    }
+
+    requestRerender();
+    return true;
+}
+
+bool RenderEngine::savePNG(const std::string &path) {
+    std::vector<unsigned char> rgba;
+    int w, h;
+    {
+        std::lock_guard<std::mutex> lk(image_mtx_);
+        if (disp_w_ <= 0 || disp_h_ <= 0 || display_.empty())
+            return false;
+        rgba = display_;
+        w = disp_w_;
+        h = disp_h_;
+    }
+    FILE *fp = fopen(path.c_str(), "wb");
+    if (!fp)
+        return false;
+    char empty[] = "";
+    flam3_img_comments comm{empty, empty, empty, empty};
+    write_png(fp, rgba.data(), w, h, &comm, 1);  // RGBA8, 1 byte/channel
+    fclose(fp);
+    return true;
 }
 
 bool RenderEngine::latestImage(std::vector<unsigned char> &rgba, int &w, int &h,

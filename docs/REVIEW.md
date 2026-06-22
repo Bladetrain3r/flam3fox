@@ -278,3 +278,29 @@ linkage before the `extern "C"` block so its guards neutralize the re-include.
 **Rejected:** *Qt* (heavier; deferred per D2); *system `libimgui-dev`* (its packaging
 omits/varies the GLFW+OpenGL3 backends we need); *converting the whole build to
 CMake now* (unnecessary risk — the UI CMake is self-contained).
+
+### D16 — Dockerfile for CLI builds; UI save / random / click-to-type
+**Decision:** Add a root `Dockerfile` that builds the CLI via `autoreconf -fi`,
+and three UI features: Save PNG, a Random-scene panel, and click-to-type inputs.
+**Reasoning:**
+- *Docker:* a plain `make` on a modern host fails because the committed autotools
+  files were generated with automake 1.15 (regeneration triggers, e.g. missing
+  `aclocal-1.15`, or odd shell errors). Rather than commit a mass
+  autoreconf (D10's reasoning), a clean container that runs `autoreconf -fi`
+  builds reproducibly and gives a one-command CLI. A mounted-workspace pattern
+  lets the same image rebuild edited sources.
+- *Save PNG:* reuses libflam3's `write_png` on the engine's RGBA8 preview buffer
+  (no new image dependency). v1 saves the current preview; "render at quality N
+  then save" can come later.
+- *Random scene:* `flam3_random` with UI-tunable limits, then auto-framed with
+  `flam3_estimate_bounding_box` (centers + fits the attractor, with a random
+  framing multiplier for variety) so generated flames are well-composed rather
+  than off-screen. `estimator` is zeroed (bits=33 disables DE anyway) to avoid
+  per-render warnings.
+- *Click-to-type:* switched the numeric controls from `DragScalar` to
+  `InputDouble`/`InputScalarN`, which edit on a single click (the drag widgets
+  needed Ctrl+click) — directly addressing the request.
+**Rejected:** *Bake a fixed CLI build only into the image* (kept the mounted-workspace
+flow so iterative rebuilds are easy); *write PNG by hand with libpng* (libflam3
+already has `write_png`); *render-to-full-quality on save* (deferred; preview buffer
+is what the user sees).

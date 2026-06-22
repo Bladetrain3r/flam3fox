@@ -52,10 +52,25 @@ export flam3_palettes=../../flam3-palettes.xml
 
 ## Status / next
 
-Implemented: load `.flam3`, progressive threaded preview, camera
+Implemented: load `.flam3`, progressive threaded preview, click-to-type camera
 (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform weight
-edits.
+edits, **Save PNG**, and a **Random scene** panel (tunable xform-count range,
+symmetry, framing/zoom range, size, and an option to restrict to the
+AVX2-supported variations), auto-framed to fit.
 
 Planned: interactive triangle/affine xform editor, variation parameter editing,
-palette/gradient editor, file dialog, save image/flame, and promoting the AVX2
-SIMD path to the preview (`flam3_simd`).
+palette/gradient editor, a real file-open dialog, save `.flam3`, mutate/cross,
+and promoting the AVX2 SIMD path to the preview (`flam3_simd`).
+
+## CLI builds (Docker)
+
+The repo's committed autotools files were generated with automake 1.15, so a
+plain `make` on a newer host may try to regenerate them and fail. The
+`Dockerfile` at the repo root builds the CLI reproducibly (it runs
+`autoreconf -fi`):
+
+```sh
+docker build -t flam3fox .
+docker run --rm -v "$PWD:/workspace" flam3fox \
+    bash -lc 'autoreconf -fi && ./configure && make -j"$(nproc)" && ./flam3-render < test.flam3'
+```

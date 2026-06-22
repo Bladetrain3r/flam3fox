@@ -21,6 +21,17 @@ extern "C" {
 #include "flam3.h"
 }
 
+// Limits for generating a random flame, tunable from the UI.
+struct RandomParams {
+    int minXforms = 2;
+    int maxXforms = 4;
+    int symmetry  = 0;        // flam3 symmetry group; 0 = none/random
+    bool fastVarsOnly = false; // restrict to the AVX2-supported variations
+    double zoomFitMin = 0.85;  // framing multiplier applied to the auto-fit
+    double zoomFitMax = 1.30;  // (>1 crops in, <1 zooms out)
+    int size = 512;            // preview width = height
+};
+
 class RenderEngine {
 public:
     RenderEngine();
@@ -29,6 +40,12 @@ public:
     // Load the first flame from an XML string / file. Thread-safe vs the worker.
     bool loadFromString(const std::string &xml);
     bool loadFromFile(const std::string &path);
+
+    // Generate a random flame into the master genome, auto-framed to fit.
+    bool randomize(const RandomParams &p);
+
+    // Write the most recently rendered image to a PNG. False if none yet.
+    bool savePNG(const std::string &path);
 
     // The master genome, edited by the GUI thread. Returns null if none loaded.
     // After editing fields in place, call requestRerender(). For structural

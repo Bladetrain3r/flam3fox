@@ -158,13 +158,18 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
   (GLFW/OpenGL) + a self-contained CMake build that compiles the flam3 sources
   directly (SIMD enabled), with Dear ImGui vendored as a submodule. A headless
   `render_engine_test` verifies the orchestration without a display.
-- ✅ **First controls:** load `.flam3`, target-quality slider, camera
+- ✅ **Controls:** load `.flam3`, target-quality slider, camera
   (center/zoom/rotate/scale), tone (brightness/gamma/vibrancy), per-xform
-  weight edits — all re-rendering live.
+  weight edits — all click-to-type and re-rendering live.
+- ✅ **Save PNG** (current preview, via libflam3's `write_png`).
+- ✅ **Random scene panel** — `flam3_random` with tunable limits (xform-count
+  range, symmetry, SIMD-fast-variation restriction, framing/zoom range, size),
+  auto-framed via `flam3_estimate_bounding_box`.
+- ✅ **Dockerfile** for reproducible CLI builds (`autoreconf -fi` sidesteps the
+  host automake-version mismatch).
 - **Next:** interactive triangle/affine xform editor, variation params,
-  palette/gradient editor, file dialog, save image/flame, random/mutate/cross
-  via existing library calls, and an option to drive previews through the AVX2
-  SIMD path.
+  palette/gradient editor, a real file-open dialog, save `.flam3`,
+  mutate/cross, and a toggle to drive previews through the AVX2 SIMD path.
 
 ### Cross-cutting (as needed)
 - CMake build alongside/replacing autotools to ease GUI + tooling.
