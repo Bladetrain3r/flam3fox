@@ -197,3 +197,20 @@ coefficients it matches (mean abs ≈ 0.16). The cause is the D11 bad-value trad
 expansive maps generate many out-of-range points, and the scalar retry-up-to-5×
 differs from the SIMD single-reset — not a math error (verified by hand). This is an
 accepted limitation of the opt-in path, most visible on piecewise-linear maps.
+
+### D13 — Vectorized sincos for trig variations
+**Decision:** Add a `simd_sincos(__m256)` (Cephes-style 2-term Cody-Waite range
+reduction + minimax polynomials) and use it for `sinusoidal`, `cylinder`, `swirl`,
+`diamond`. Tighten the SIMD guard to `__AVX2__ && __FMA__` (the path already relies
+on `fmadd`).
+**Reasoning:** AVX2 has no transcendental instructions, so trig variations need a
+vector sincos. A self-contained ~1e-6-accuracy polynomial is plenty for an 8-bit
+histogram and avoids a dependency on a vector-math library (SLEEF/libmvec). It also
+delivers the *largest* SIMD wins so far — 2.2–2.5× on a 2-xform trig scene vs
+~1.9× for arithmetic-only — because it replaces costly scalar `libm` `sin`/`cos`.
+**Validation:** All four trig variations render statistically equivalent to the
+scalar path (mean abs diff < 0.2/255), confirming the approximation's accuracy over
+the argument ranges flames use (swirl feeds `sumsq`, diamond feeds `sqrt`).
+**Rejected:** *SLEEF / glibc libmvec* (extra dependency / build-system work for
+accuracy we don't need); *per-call scalar fallback to libm* (would defeat the
+vectorization).

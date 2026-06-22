@@ -308,7 +308,7 @@ int flam3_iterate(flam3_genome *cp, int n, int fuse,  double *samples, unsigned 
  * stay independent without gather/scatter.
  * ------------------------------------------------------------------------- */
 
-#if defined(__AVX2__)
+#if defined(__AVX2__) && defined(__FMA__)
 #include <immintrin.h>
 
 #ifndef badvalue
@@ -316,6 +316,78 @@ int flam3_iterate(flam3_genome *cp, int n, int fuse,  double *samples, unsigned 
 #endif
 
 #define SIMD_W 8
+
+/* Vectorized sin & cos for 8 floats. Cephes-derived range reduction (2-term
+   Cody-Waite) plus minimax polynomials; accuracy ~1e-6 over the argument
+   ranges flames use, ample for an 8-bit histogram. */
+static inline void simd_sincos(__m256 x, __m256 *s_out, __m256 *c_out) {
+   const __m256 FOPI = _mm256_set1_ps(1.27323954473516f);   /* 4/pi */
+   const __m256 DP1 = _mm256_set1_ps(-0.78515625f);
+   const __m256 DP2 = _mm256_set1_ps(-2.4187564849853515625e-4f);
+   const __m256 DP3 = _mm256_set1_ps(-3.77489497744594108e-8f);
+   const __m256 sin_p0 = _mm256_set1_ps(-1.9515295891e-4f);
+   const __m256 sin_p1 = _mm256_set1_ps( 8.3321608736e-3f);
+   const __m256 sin_p2 = _mm256_set1_ps(-1.6666654611e-1f);
+   const __m256 cos_p0 = _mm256_set1_ps( 2.443315711809948e-5f);
+   const __m256 cos_p1 = _mm256_set1_ps(-1.388731625493765e-3f);
+   const __m256 cos_p2 = _mm256_set1_ps( 4.166664568298827e-2f);
+   const __m256 c_half = _mm256_set1_ps(0.5f);
+   const __m256 c_one  = _mm256_set1_ps(1.0f);
+   const __m256 sign_mask = _mm256_castsi256_ps(_mm256_set1_epi32((int)0x80000000));
+   const __m256 inv_sign  = _mm256_castsi256_ps(_mm256_set1_epi32((int)0x7fffffff));
+
+   __m256 xa, y, z, ys, yc, sin_sign, cos_sign, poly_mask, sv, cv;
+   __m256i emm2, emm4, e0, e2;
+
+   sin_sign = _mm256_and_ps(x, sign_mask);   /* sign of x */
+   xa = _mm256_and_ps(x, inv_sign);          /* |x| */
+
+   y = _mm256_mul_ps(xa, FOPI);
+   emm2 = _mm256_cvttps_epi32(y);
+   emm2 = _mm256_add_epi32(emm2, _mm256_set1_epi32(1));
+   emm2 = _mm256_and_si256(emm2, _mm256_set1_epi32(~1));
+   y = _mm256_cvtepi32_ps(emm2);
+   emm4 = emm2;
+
+   /* sin sign flips for octants where (emm2 & 4) */
+   e0 = _mm256_slli_epi32(_mm256_and_si256(emm2, _mm256_set1_epi32(4)), 29);
+   sin_sign = _mm256_xor_ps(sin_sign, _mm256_castsi256_ps(e0));
+
+   /* polynomial selector: (emm2 & 2) == 0 */
+   e2 = _mm256_and_si256(emm2, _mm256_set1_epi32(2));
+   poly_mask = _mm256_castsi256_ps(_mm256_cmpeq_epi32(e2, _mm256_setzero_si256()));
+
+   /* cos sign: (~(emm4 - 2) & 4) << 29 */
+   emm4 = _mm256_sub_epi32(emm4, _mm256_set1_epi32(2));
+   emm4 = _mm256_andnot_si256(emm4, _mm256_set1_epi32(4));
+   emm4 = _mm256_slli_epi32(emm4, 29);
+   cos_sign = _mm256_castsi256_ps(emm4);
+
+   /* range reduction: xa = |x| + y*DP1 + y*DP2 + y*DP3 */
+   xa = _mm256_fmadd_ps(y, DP1, xa);
+   xa = _mm256_fmadd_ps(y, DP2, xa);
+   xa = _mm256_fmadd_ps(y, DP3, xa);
+   z = _mm256_mul_ps(xa, xa);
+
+   /* cos polynomial: yc = (cos_p0*z + cos_p1)*z + cos_p2, *z*z - 0.5*z + 1 */
+   yc = _mm256_fmadd_ps(cos_p0, z, cos_p1);
+   yc = _mm256_fmadd_ps(yc, z, cos_p2);
+   yc = _mm256_mul_ps(yc, _mm256_mul_ps(z, z));
+   yc = _mm256_sub_ps(yc, _mm256_mul_ps(z, c_half));
+   yc = _mm256_add_ps(yc, c_one);
+
+   /* sin polynomial: ys = ((sin_p0*z + sin_p1)*z + sin_p2)*z*xa + xa */
+   ys = _mm256_fmadd_ps(sin_p0, z, sin_p1);
+   ys = _mm256_fmadd_ps(ys, z, sin_p2);
+   ys = _mm256_mul_ps(ys, _mm256_mul_ps(z, xa));
+   ys = _mm256_add_ps(ys, xa);
+
+   /* select polynomials, then apply signs */
+   sv = _mm256_blendv_ps(yc, ys, poly_mask);
+   cv = _mm256_blendv_ps(ys, yc, poly_mask);
+   *s_out = _mm256_xor_ps(sv, sin_sign);
+   *c_out = _mm256_xor_ps(cv, cos_sign);
+}
 
 /* Variations implemented in the SIMD path so far. All need only arithmetic
    plus sqrt (no transcendentals), so they vectorize cleanly with AVX2. */
@@ -329,6 +401,10 @@ static int simd_var_supported(int v) {
       case VAR_FISHEYE:
       case VAR_EYEFISH:
       case VAR_BUBBLE:
+      case VAR_SINUSOIDAL:
+      case VAR_CYLINDER:
+      case VAR_SWIRL:
+      case VAR_DIAMOND:
          return 1;
       default:
          return 0;
@@ -476,6 +552,44 @@ int flam3_iterate_simd(flam3_genome *cp, int n, int fuse, double *samples,
                __m256 r = _mm256_div_ps(w, _mm256_fmadd_ps(_mm256_set1_ps(0.25f), sumsq, one));
                p0 = _mm256_fmadd_ps(r, tx, p0);
                p1 = _mm256_fmadd_ps(r, ty, p1);
+               break; }
+
+            case VAR_SINUSOIDAL: {
+               /* p0 += w*sin(tx) ; p1 += w*sin(ty) */
+               __m256 stx, ctx, sty, cty;
+               simd_sincos(tx, &stx, &ctx);
+               simd_sincos(ty, &sty, &cty);
+               p0 = _mm256_fmadd_ps(w, stx, p0);
+               p1 = _mm256_fmadd_ps(w, sty, p1);
+               break; }
+
+            case VAR_CYLINDER: {
+               /* p0 += w*sin(tx) ; p1 += w*ty */
+               __m256 stx, ctx;
+               simd_sincos(tx, &stx, &ctx);
+               p0 = _mm256_fmadd_ps(w, stx, p0);
+               p1 = _mm256_fmadd_ps(w, ty, p1);
+               break; }
+
+            case VAR_SWIRL: {
+               /* c1=sin(sumsq), c2=cos(sumsq); nx=c1*tx-c2*ty; ny=c2*tx+c1*ty */
+               __m256 c1, c2, nxv, nyv;
+               simd_sincos(sumsq, &c1, &c2);
+               nxv = _mm256_fmsub_ps(c1, tx, _mm256_mul_ps(c2, ty));
+               nyv = _mm256_fmadd_ps(c2, tx, _mm256_mul_ps(c1, ty));
+               p0 = _mm256_fmadd_ps(w, nxv, p0);
+               p1 = _mm256_fmadd_ps(w, nyv, p1);
+               break; }
+
+            case VAR_DIAMOND: {
+               /* sr=sin(psqrt), cr=cos(psqrt); sina=tx/psqrt, cosa=ty/psqrt
+                  p0 += w*sina*cr ; p1 += w*cosa*sr */
+               __m256 sr, cr, sina, cosa;
+               simd_sincos(psqrt, &sr, &cr);
+               sina = _mm256_div_ps(tx, psqrt);
+               cosa = _mm256_div_ps(ty, psqrt);
+               p0 = _mm256_fmadd_ps(w, _mm256_mul_ps(sina, cr), p0);
+               p1 = _mm256_fmadd_ps(w, _mm256_mul_ps(cosa, sr), p1);
                break; }
 
             default:
