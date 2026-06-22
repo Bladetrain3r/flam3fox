@@ -214,3 +214,34 @@ the argument ranges flames use (swirl feeds `sumsq`, diamond feeds `sqrt`).
 **Rejected:** *SLEEF / glibc libmvec* (extra dependency / build-system work for
 accuracy we don't need); *per-call scalar fallback to libm* (would defeat the
 vectorization).
+
+### D14 — Binning iterator + hybrid dispatch (not a wholesale replacement)
+**Decision:** Add a binning iterator (persistent pool of trajectories,
+counting-sorted by chosen xform each step so each SIMD group applies one xform)
+*alongside* the masked one, and dispatch by xform count (`flam3_iterate_simd`
+calls binning for ≥6 xforms, masked otherwise). Both share `simd_apply_xform`.
+**Reasoning — measured, not assumed:** Binning removes the masked path's
+`~8/num_xforms` decay, but a clean head-to-head showed it does **not** dominate on
+8-wide CPU. Single-thread speedup vs scalar:
+
+| variation | nx=2 | nx=4 | nx=6 | nx=8 |
+| --- | --- | --- | --- | --- |
+| spherical masked | **1.79** | **1.59** | 1.35 | 1.14 |
+| spherical binning | 1.32 | 1.37 | 1.36 | **1.33** |
+| swirl masked | **2.49** | **1.85** | 1.55 | 1.27 |
+| swirl binning | 1.78 | 1.81 | **1.81** | **1.74** |
+
+Masked keeps its lanes live in registers (no gather/scatter), so it wins at the
+common low xform counts; binning's fixed gather/scatter + counting-sort overhead
+only pays off once the masked path has decayed (~5-6 xforms). Binning is really a
+GPU/SIMT technique (Phase 3) — on CPU it's a niche win for high-xform flames. The
+hybrid captures both: it removes the masked cliff (8-xform swirl 1.27→1.71) without
+giving up low-xform speed.
+**Why a count-based threshold (6):** Simple, cheap, and the crossover is shallow
+near the boundary, so a fixed cutoff costs little even when variation cost shifts it.
+**Validation:** Both paths produce output statistically equivalent to scalar (6-xform
+binned scene: mean abs ≈ 0.05/255). Default scalar path stays bit-exact.
+**Rejected:** *Replace masked with binning outright* (regresses the common 2-4 xform
+case, as the table shows); *keep masked only* (leaves the high-xform cliff and drops
+binning, which the GPU phase will build on); *AVX2 gather/scatter instructions* (the
+bottleneck is per-point data movement, which `vgather` doesn't meaningfully fix here).

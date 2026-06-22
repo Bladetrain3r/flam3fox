@@ -135,9 +135,16 @@ Baseline (bench scene, 256², quality 1000, 4-vCPU box):
     2-xform scene. The masked design scales ~`8 / num_xforms`, so fewer xforms
     win more; output validated statistically equivalent to scalar.
 - **Next:** vectorize more variations (incl. fast/approx transcendentals for
-  `sin`/`cos`/`atan2`), reduce per-step overhead (vectorized xform-selection
-  RNG, batched store), then evaluate making SIMD the default once the supported
-  set is broad enough.
+  `sin`/`cos`/`atan2`), reduce per-step overhead, then evaluate making SIMD the
+  default once the supported set is broad enough.
+- ✅ **Binning iterator + hybrid dispatch.** A second iterator keeps a pool of
+  trajectories and counting-sorts them by chosen xform each step so every SIMD
+  group applies one xform (no `8/num_xforms` decay). Head-to-head showed masked
+  wins at low xform counts (register residency) and binning wins at high counts
+  (flat throughput), crossover ~5-6 xforms — so `flam3_iterate_simd` now
+  dispatches: masked for `<6` xforms, binning for `>=6`. This removes the masked
+  cliff (8-xform `swirl` 1.27× → 1.71×, `spherical` 1.14× → 1.35×) while keeping
+  low-xform speed (2-xform `swirl` ~2.5×). Both share `simd_apply_xform`.
 - Restructure accumulation to handle batched lane output.
 
 ### Phase 3 — GPU backend *(the ceiling)*
